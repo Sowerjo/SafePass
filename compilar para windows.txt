@@ -1,0 +1,1 @@
+pyinstaller --onefile --noconsole --name SafePass --icon icone.ico --add-data "crypto_utils.py;." main.py
