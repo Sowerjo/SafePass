@@ -1,20 +1,22 @@
-import sys, os, json, time
+import sys, os, json, time, zipfile
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QLineEdit,
     QTableWidget, QTableWidgetItem, QDialog, QFormLayout,
     QPushButton, QHBoxLayout, QToolButton, QStyledItemDelegate,
-    QStyleOptionViewItem, QTabWidget, QMenu, QInputDialog
+    QStyleOptionViewItem, QTabWidget, QMenu, QInputDialog, QFileDialog, QMessageBox
 )
 from PyQt5.QtCore import Qt, QTimer, QEvent
 from PyQt5.QtGui import QPainter, QPen, QLinearGradient, QColor, QFont
 from crypto_utils import create_master, verify_master, encrypt_data, decrypt_data
+import openpyxl
 
 CONFIG = 'config.json'
 VAULT  = 'vault.dat'
 
-
 class AddLoginDialog(QDialog):
+    # ... igual ...
+
     def __init__(self, parent=None, initial=None):
         super().__init__(parent)
         self.setWindowTitle("✏️ Editar Login" if initial else "➕ Cadastrar Login")
@@ -32,14 +34,12 @@ class AddLoginDialog(QDialog):
         form.addRow("Senha:",     self.senha)
         form.addRow("Descrição:", self.descricao)
         layout.addLayout(form)
-
         if initial:
             self.conta.setText(initial[0])
             self.site.setText(initial[1])
             self.login.setText(initial[2])
             self.senha.setText(initial[3])
             self.descricao.setText(initial[4])
-
         btns = QHBoxLayout()
         btns.addStretch()
         ok     = QPushButton("OK");     ok.clicked.connect(self.accept)
@@ -56,15 +56,38 @@ class AddLoginDialog(QDialog):
             self.descricao.text().strip()
         ]
 
+class ChangePasswordDialog(QDialog):
+    # ... igual ...
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Alterar Senha Mestre")
+        self.setFixedSize(350, 240)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.old_pw = QLineEdit(); self.old_pw.setEchoMode(QLineEdit.Password)
+        self.new_pw = QLineEdit(); self.new_pw.setEchoMode(QLineEdit.Password)
+        self.new_pw2 = QLineEdit(); self.new_pw2.setEchoMode(QLineEdit.Password)
+        form.addRow("Senha atual:", self.old_pw)
+        form.addRow("Nova senha:", self.new_pw)
+        form.addRow("Repita nova senha:", self.new_pw2)
+        layout.addLayout(form)
+        btns = QHBoxLayout()
+        btns.addStretch()
+        ok = QPushButton("Alterar"); ok.clicked.connect(self.accept)
+        cancel = QPushButton("Cancelar"); cancel.clicked.connect(self.reject)
+        btns.addWidget(ok); btns.addWidget(cancel)
+        layout.addLayout(btns)
+
+    def get_data(self):
+        return self.old_pw.text(), self.new_pw.text(), self.new_pw2.text()
 
 class LoginDialog(QDialog):
     def __init__(self):
         super().__init__()
-        # >>>>>> Adiciona ícone na janela <<<<<<
         self.setWindowIcon(QtGui.QIcon("icone.ico"))
-
         self.setWindowTitle("🔐 SafePass")
-        self.setFixedSize(360, 220)
+        self.setFixedSize(360, 260)
         self.setWindowFlags(self.windowFlags() | QtCore.Qt.FramelessWindowHint)
         self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
         self.setStyleSheet("""
@@ -112,13 +135,30 @@ class LoginDialog(QDialog):
         main.addWidget(prompt)
         main.addWidget(self.pw)
         main.addWidget(btn)
+
+        # Botão para importar cofre
+        import_btn = QPushButton("Importar Cofre (.safepass)")
+        import_btn.clicked.connect(self.import_vault)
+        main.addWidget(import_btn)
         main.addStretch()
 
     def get_password(self):
         return self.pw.text()
 
+    def import_vault(self):
+        file, _ = QFileDialog.getOpenFileName(self, "Importar Cofre", "", "SafePass Backup (*.safepass *.zip)")
+        if not file:
+            return
+        try:
+            with zipfile.ZipFile(file, "r") as zipf:
+                zipf.extract("vault.dat", ".")
+                zipf.extract("config.json", ".")
+            QtWidgets.QMessageBox.information(self, "Sucesso", "Backup importado! Agora faça login normalmente.")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Erro", f"Falha ao importar: {e}")
 
 class MaskedDelegate(QStyledItemDelegate):
+    # ... igual ...
     def paint(self, painter, option, index):
         text = index.data() or ""
         masked = "*" * len(text)
@@ -139,8 +179,8 @@ class MaskedDelegate(QStyledItemDelegate):
     def setModelData(self, editor, model, index):
         model.setData(index, editor.text(), Qt.EditRole)
 
-
 class TripleClickTable(QTableWidget):
+    # ... igual ...
     def __init__(self, *a, **k):
         super().__init__(*a, **k)
         self._clicks = {}
@@ -170,21 +210,15 @@ class TripleClickTable(QTableWidget):
             w.selectAll()
             w.setFocus()
 
-
 class MainWindow(QMainWindow):
     def __init__(self, key):
         super().__init__()
-        # >>>>>> Adiciona ícone na janela <<<<<<
         self.setWindowIcon(QtGui.QIcon("icone.ico"))
-
         self.key      = key
         self.pass_col = 3
         self.hovered  = (None, None, None)
-
         self.setWindowTitle("SafePass")
         self.resize(1000, 650)
-
-        # central widget com borda neon
         ctr = QWidget(self)
         ctr.setObjectName("central")
         ctr.setStyleSheet("""
@@ -194,12 +228,9 @@ class MainWindow(QMainWindow):
             }
         """)
         self.setCentralWidget(ctr)
-
         layout = QVBoxLayout(ctr)
         layout.setContentsMargins(0,0,0,0)
         layout.setSpacing(8)
-
-        # busca
         self.search = QLineEdit()
         self.search.setPlaceholderText("🔍  Search...")
         self.search.setFixedHeight(34)
@@ -218,8 +249,6 @@ class MainWindow(QMainWindow):
         """)
         self.search.textChanged.connect(self._filter)
         layout.addWidget(self.search)
-
-        # abas
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("""
             QTabBar::tab {
@@ -232,12 +261,8 @@ class MainWindow(QMainWindow):
             }
         """)
         layout.addWidget(self.tabs)
-
-        # aba padrão
         default_tbl = self._create_futuristic_table()
         self.tabs.addTab(default_tbl, "Padrão")
-
-        # botão de cópia
         self.copy_btn = QToolButton(default_tbl)
         self.copy_btn.setText("📋")
         self.copy_btn.setCursor(Qt.PointingHandCursor)
@@ -251,41 +276,51 @@ class MainWindow(QMainWindow):
             }
         """)
         self.copy_btn.hide()
-
-        # menu bar
         mb = self.menuBar()
         mb.setStyleSheet("background-color: #002233; color: #33ccff;")
-
         add_menu = mb.addMenu("➕ Add")
         add_menu.setStyleSheet("QMenu { background: #002233; color:#33ccff; }")
         add_menu.addAction("New Login", self.add_login)
-
         file_menu = mb.addMenu("💾 File")
         file_menu.setStyleSheet("QMenu { background: #002233; color:#33ccff; }")
         file_menu.addAction("Save Vault", self.save_vault)
-
+        file_menu.addAction("Alterar Senha Mestre", self.change_master_password)
+        file_menu.addAction("Importar XLSX", self.import_xlsx)
+        # --- Exportação do cofre (backup .safepass) ---
+        file_menu.addAction("Exportar Cofre (.safepass)", self.export_vault)
         tabs_menu = mb.addMenu("📑 Tabs")
         tabs_menu.setStyleSheet("QMenu { background: #002233; color:#33ccff; }")
         tabs_menu.addAction("New Tab",       self.create_tab)
         tabs_menu.addAction("✏️ Rename Tab", self.rename_tab)
         tabs_menu.addAction("🗑️ Remove Tab", self.remove_tab)
-
-        # carrega vault se existir (incluindo widths)
         if os.path.exists(VAULT):
             raw  = open(VAULT, 'rb').read()
             data = json.loads(decrypt_data(self.key, raw).decode())
             self.tabs.clear()
             for tab in data.get("tabs", []):
                 tbl = self._create_futuristic_table()
-                # popula linhas
                 for row in tab["items"]:
                     self._populate_row(tbl, row)
-                # reaplica larguras
                 for c, w in enumerate(tab.get("widths", [])):
                     tbl.setColumnWidth(c, w)
                 self.tabs.addTab(tbl, tab["name"])
 
+    def export_vault(self):
+        out, _ = QFileDialog.getSaveFileName(self, "Exportar Cofre", "backup.safepass", "SafePass Backup (*.safepass)")
+        if not out:
+            return
+        try:
+            with zipfile.ZipFile(out, "w") as zipf:
+                zipf.write(VAULT, "vault.dat")
+                zipf.write(CONFIG, "config.json")
+            QtWidgets.QMessageBox.information(self, "Sucesso", "Cofre exportado como .safepass!")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Erro", f"Falha ao exportar: {e}")
+
+    # ... resto igual ...
+
     def _create_futuristic_table(self):
+        # ... igual ...
         table = TripleClickTable(0, 5)
         table.owner = self
         table.setHorizontalHeaderLabels(
@@ -333,12 +368,13 @@ class MainWindow(QMainWindow):
         """)
         return table
 
+    # ... todo o resto do MainWindow permanece igual (não mexa) ...
+
     def create_tab(self):
         name, ok = QInputDialog.getText(self, "Nova Aba", "Nome da aba:")
         if ok and name.strip():
             tbl = self._create_futuristic_table()
             self.tabs.addTab(tbl, name.strip())
-
     def rename_tab(self):
         idx = self.tabs.currentIndex()
         if idx < 0: return
@@ -346,18 +382,15 @@ class MainWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "Renomear Aba", "Novo nome:", text=old)
         if ok and name.strip():
             self.tabs.setTabText(idx, name.strip())
-
     def remove_tab(self):
         idx = self.tabs.currentIndex()
         if self.tabs.count() > 1 and idx >= 0:
             self.tabs.removeTab(idx)
-
     def add_login(self):
         tbl = self.tabs.currentWidget()
         dlg = AddLoginDialog(self)
         if dlg.exec_() == QDialog.Accepted:
             self._populate_row(tbl, dlg.data())
-
     def _populate_row(self, table, row_data):
         r = table.rowCount()
         table.insertRow(r)
@@ -366,7 +399,6 @@ class MainWindow(QMainWindow):
             itm.setToolTip(val)
             itm.setFlags(itm.flags() | Qt.ItemIsEditable)
             table.setItem(r, c, itm)
-
     def on_table_context_menu(self, pos, table):
         row = table.rowAt(pos.y())
         if row < 0: return
@@ -374,7 +406,6 @@ class MainWindow(QMainWindow):
         menu.addAction("✏️ Editar",  lambda: self.edit_cadastro(table, row))
         menu.addAction("🗑️ Excluir", lambda: table.removeRow(row))
         menu.exec_(table.viewport().mapToGlobal(pos))
-
     def edit_cadastro(self, table, row):
         data = [
             table.item(row,c).text() if table.item(row,c) else ''
@@ -393,7 +424,6 @@ class MainWindow(QMainWindow):
                     itm.setFlags(itm.flags() | Qt.ItemIsEditable)
                     itm.setToolTip(val)
                     table.setItem(row, c, itm)
-
     def save_vault(self):
         payload = {"tabs": []}
         for i in range(self.tabs.count()):
@@ -414,7 +444,6 @@ class MainWindow(QMainWindow):
         with open(VAULT, 'wb') as f:
             f.write(token)
         QtWidgets.QMessageBox.information(self, "Sucesso", "Dados salvos e criptografados!")
-
     def _filter(self, txt):
         tbl = self.tabs.currentWidget()
         t = txt.lower()
@@ -424,7 +453,6 @@ class MainWindow(QMainWindow):
                 for c in range(tbl.columnCount())
             )
             tbl.setRowHidden(r, not ok)
-
     def _on_hover(self, r, c):
         tbl = self.tabs.currentWidget()
         itm = tbl.item(r, c)
@@ -441,20 +469,17 @@ class MainWindow(QMainWindow):
         except:
             pass
         self.copy_btn.clicked.connect(lambda: self._copy(r, c))
-
     def _copy(self, r, c):
         tbl = self.tabs.currentWidget()
         text = tbl.item(r, c).text()
         QApplication.clipboard().setText(text)
         QtWidgets.QToolTip.showText(QtGui.QCursor.pos(), "Copiado!", tbl)
-
     def eventFilter(self, obj, ev):
         current = self.tabs.currentWidget()
         if isinstance(current, QTableWidget):
             if obj is current.viewport() and ev.type() == QEvent.Leave:
                 self.copy_btn.hide()
         return super().eventFilter(obj, ev)
-
     def paintEvent(self, event):
         painter = QPainter(self)
         rect = self.rect().adjusted(4, 4, -4, -4)
@@ -464,7 +489,50 @@ class MainWindow(QMainWindow):
         pen = QPen(grad, 4)
         painter.setPen(pen)
         painter.drawRoundedRect(rect, 8, 8)
-
+    def change_master_password(self):
+        dlg = ChangePasswordDialog(self)
+        if dlg.exec_() == QDialog.Accepted:
+            old_pw, new_pw, new_pw2 = dlg.get_data()
+            try:
+                key = verify_master(old_pw)
+            except Exception:
+                QMessageBox.warning(self, "Erro", "Senha atual incorreta!")
+                return
+            if not new_pw or not new_pw2:
+                QMessageBox.warning(self, "Erro", "Digite a nova senha duas vezes.")
+                return
+            if new_pw != new_pw2:
+                QMessageBox.warning(self, "Erro", "As novas senhas não coincidem.")
+                return
+            # Atualiza senha mestre
+            create_master(new_pw)
+            self.key = verify_master(new_pw)
+            self.save_vault()
+            QMessageBox.information(self, "OK", "Senha mestre alterada com sucesso!")
+    def import_xlsx(self):
+        file, _ = QFileDialog.getOpenFileName(self, "Importar XLSX", "", "Planilhas Excel (*.xlsx)")
+        if not file:
+            return
+        try:
+            wb = openpyxl.load_workbook(file)
+            ws = wb.active
+            tbl = self.tabs.currentWidget()
+            count = 0
+            for row in ws.iter_rows(min_row=2, values_only=True):  # ignora header
+                if all(cell is None or str(cell).strip() == "" for cell in row):
+                    continue
+                # Garante 5 colunas
+                values = [str(cell or '') for cell in row[:5]]
+                while len(values) < 5:
+                    values.append("")
+                self._populate_row(tbl, values)
+                count += 1
+            if count == 0:
+                QMessageBox.warning(self, "Aviso", "Nenhum dado foi importado!")
+            else:
+                QMessageBox.information(self, "Sucesso", f"{count} registros importados.")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao importar: {e}")
 
 def main():
     app = QApplication(sys.argv)
@@ -492,7 +560,6 @@ def main():
     w = MainWindow(key)
     w.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
